@@ -1,0 +1,25 @@
+# Byte-compiled / Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Large data directories – don't commit these!
+enteroscope/modules/amr_module/data/   # if also large 
+
+# Logs, temp, OS
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Conda / environment
+.env
+.venv
+ENV/
+venv/
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
+Dockerfile
