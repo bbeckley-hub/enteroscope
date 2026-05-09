@@ -68,7 +68,6 @@
 - [🚀 Usage Guide (CLI)](#-usage-guide-cli)
 - [📁 Output Structure](#-output-structure)
 - [🔍 Analytical Modules](#-analytical-modules)
-- [📈 Performance Benchmarks](#-performance-benchmarks)
 - [🔬 Validation & Accuracy](#-validation--accuracy)
 - [🆚 Tool Comparison](#-tool-comparison)
 - [🤖 AI Integration Guide](#-ai-integration-guide)
@@ -332,17 +331,6 @@ Enteroscope_results/
 
 ### 7. Ultimate Reporter
 - Interactive HTML with scrollable genome lists, filter buttons, combination tables, rotating educational facts, AI‑ready JSON.
-
----
-
-## 📈 Performance Benchmarks
-
-| System | Samples | Time | Speed vs generalist |
-|--------|---------|------|---------------------|
-| Laptop (2 cores, 8 GB) | 1 | 2m 20s | 6× faster |
-| Laptop (2 cores, 8 GB) | 24 | 26m | 7× faster |
-| Workstation (16 cores) | 1 | 1m 15s | 9× faster |
-| Workstation (16 cores) | 24 | 12m 10s | 11× faster |
 
 ---
 
