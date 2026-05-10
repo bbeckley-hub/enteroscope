@@ -10,7 +10,7 @@
 ![Latest Release Date](https://anaconda.org/bbeckley-hub/enteroscope/badges/latest_release_date.svg)
 ![Platforms](https://anaconda.org/bbeckley-hub/enteroscope/badges/platforms.svg)
 ![License](https://anaconda.org/bbeckley-hub/enteroscope/badges/license.svg)
-![Downloads](https://anaconda.org/bbeckley-hub/enteroscope/badges/downloads.svg)
+
 
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/bbeckleyhub/enteroscope)](https://hub.docker.com/r/bbeckleyhub/enteroscope)
