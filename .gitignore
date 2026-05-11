@@ -23,3 +23,4 @@ build/
 dist/
 *.egg-info/
 Dockerfile
+enteroscope/modules/amr_module/data/
