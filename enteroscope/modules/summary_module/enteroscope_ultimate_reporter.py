@@ -210,16 +210,14 @@ class EnteroUltimateHTMLParser:
                     gene = str(row['Gene']).strip()
                     if not gene:
                         continue
-                    count = 0
-                    freq_str = str(row.get('Frequency', '0')).strip()
-                    match = re.search(r'(\d+)', freq_str)
-                    if match:
-                        count = int(match.group(1))
-                    percentage = (count / total_samples) * 100 if total_samples > 0 else 0
+                    # Extract genomes list from the "Genomes" column
                     genomes = []
                     if 'Genomes' in df_freq.columns and pd.notna(row.get('Genomes')):
                         genomes_str = str(row['Genomes'])
                         genomes = [self.normalize_sample_id(g.strip()) for g in genomes_str.split(',') if g.strip()]
+                    # Use the actual number of genomes as the count
+                    count = len(genomes)
+                    percentage = (count / total_samples) * 100 if total_samples > 0 else 0
                     gene_frequencies[gene] = {
                         'count': count,
                         'percentage': round(percentage, 2),
@@ -244,7 +242,7 @@ class EnteroUltimateHTMLParser:
         except Exception as e:
             print(f"    ❌ Error parsing AMRfinder: {e}")
             return {}, {}
-    
+
     def parse_abricate_database_report(self, file_path: Path, total_samples: int = 0) -> Tuple[Dict[str, List], Dict[str, Dict]]:
         print(f"  🧬 Parsing ABRicate: {file_path.name}")
         try:
@@ -270,16 +268,14 @@ class EnteroUltimateHTMLParser:
                     gene = re.sub(r'^\([^)]+\)', '', gene_full).strip()
                     if not gene:
                         gene = gene_full
-                    count = 0
-                    freq_str = str(row.get('Frequency', '0')).strip()
-                    match = re.search(r'(\d+)', freq_str)
-                    if match:
-                        count = int(match.group(1))
-                    percentage = (count / total_samples) * 100 if total_samples > 0 else 0
+                    # Extract genomes list from the "Genomes" column
                     genomes = []
                     if 'Genomes' in df_freq.columns and pd.notna(row.get('Genomes')):
                         genomes_str = str(row['Genomes'])
                         genomes = [self.normalize_sample_id(g.strip()) for g in genomes_str.split(',') if g.strip()]
+                    # Use the actual number of genomes as the count
+                    count = len(genomes)
+                    percentage = (count / total_samples) * 100 if total_samples > 0 else 0
                     gene_frequencies[gene] = {
                         'count': count,
                         'percentage': round(percentage, 2),
@@ -316,7 +312,7 @@ class EnteroUltimateHTMLParser:
         except Exception as e:
             print(f"    ❌ Error parsing ABRicate report: {e}")
             return {}, {}
-    
+
     def parse_plasmidfinder_report(self, file_path: Path, total_samples: int = 0) -> Tuple[Dict[str, List], Dict[str, Dict]]:
         print(f"  🧬 Parsing PlasmidFinder: {file_path.name}")
         try:
@@ -334,16 +330,14 @@ class EnteroUltimateHTMLParser:
                     if not gene_full:
                         continue
                     gene = self._clean_plasmid_gene_name(gene_full)
-                    count = 0
-                    freq_str = str(row.get('Frequency', '0')).strip()
-                    match = re.search(r'(\d+)', freq_str)
-                    if match:
-                        count = int(match.group(1))
-                    percentage = (count / total_samples) * 100 if total_samples > 0 else 0
+                    # Extract genomes list from the "Genomes" column
                     genomes = []
                     if 'Genomes' in df_freq.columns and pd.notna(row.get('Genomes')):
                         genomes_str = str(row['Genomes'])
                         genomes = [self.normalize_sample_id(g.strip()) for g in genomes_str.split(',') if g.strip()]
+                    # Use the actual number of genomes as the count
+                    count = len(genomes)
+                    percentage = (count / total_samples) * 100 if total_samples > 0 else 0
                     plasmid_type = self._categorize_plasmid(gene)
                     plasmid_frequencies[gene] = {
                         'count': count,
@@ -382,7 +376,7 @@ class EnteroUltimateHTMLParser:
         except Exception as e:
             print(f"    ❌ Error parsing PlasmidFinder: {e}")
             return {}, {}
-    
+        
     def _clean_plasmid_gene_name(self, gene_name: str) -> str:
         gene = re.sub(r'_(\d+)$', '', gene_name)
         plasmid_match = re.search(r'\((.*?)\)', gene)
