@@ -1,5 +1,9 @@
-<div align="center">
+<p align="center">
+  <img src="https://raw.githubusercontent.com/bbeckley-hub/enteroscope/main/enteroscope.png" alt="EnteroScope Banner" width="100%">
+</p>
 
+<div align="center">
+  
 # 🔬 EnteroScope
 
 ### **A species-optimized computational pipeline for rapid, accessible *Enterobacter cloacae* genotyping and surveillance**
