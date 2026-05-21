@@ -427,11 +427,11 @@ If you use EnteroScope in your research, please cite:
 @article{beckley2026enteroscope,
   title={EnteroScope: a species‑optimized computational pipeline for rapid and accessible Enterobacter cloacae complex genotyping and surveillance},
   author={Beckley, Brown and Amarh, Vincent},
-  journal={BMC Genomics},
-  volume={27},
-  pages={124},
-  year={2026},
-  doi={10.1186/s12864-026-12609-x} 
+  journal={In preparation},
+  volume={?},
+  pages={??},
+  year={??},
+  doi={??} 
 }
 ```
 
