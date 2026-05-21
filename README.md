@@ -190,7 +190,6 @@ source ~/.bashrc
 # 2. Add channels
 conda config --add channels conda-forge
 conda config --add channels bioconda
-conda config --add channels bbeckley-hub
 
 # 3. Create environment
 conda create -n enteroscope python=3.9 enteroscope -y
