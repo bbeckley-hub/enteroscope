@@ -431,7 +431,7 @@ If you use EnteroScope in your research, please cite:
   volume={27},
   pages={124},
   year={2026},
-  doi={10.1186/s12864-026-12609-x} % replace with your paper's DOI
+  doi={10.1186/s12864-026-12609-x} 
 }
 ```
 
