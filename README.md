@@ -153,7 +153,7 @@ conda create -n enteroscope -c conda-forge -c bioconda -c enteroscope -y
 conda activate enteroscope
 
 # Mamba (Faster)
-mamba create -n enteroscope -c conda-forge -c bioconda -c bbeckley-hub enteroscope -y
+mamba create -n enteroscope -c conda-forge -c bioconda -c enteroscope -y
 mamba activate enteroscope
 ```
 
