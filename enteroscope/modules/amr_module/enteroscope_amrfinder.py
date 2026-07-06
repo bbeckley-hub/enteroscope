@@ -14,6 +14,7 @@ import sys
 import os
 import glob
 import logging
+import shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Optional
@@ -23,7 +24,7 @@ from datetime import datetime
 import psutil
 import json
 import random
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 class EnteroAMRfinderPlus:
     """AMRfinderPlus executor for Enterobacter cloacae complex with DYNAMIC database update"""
@@ -45,7 +46,7 @@ class EnteroAMRfinderPlus:
         
         self.metadata = {
             "tool_name": "EnteroScope AMRfinderPlus",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "authors": ["Brown Beckley"],
             "email": "brownbeckley94@gmail.com",
             "github": "https://github.com/bbeckley-hub/enteroscope",
@@ -221,12 +222,23 @@ class EnteroAMRfinderPlus:
             return False
         if not os.access(self.bundled_update, os.X_OK):
             os.chmod(self.bundled_update, 0o755)
+        
         db_dir = os.path.join(self.module_dir, "data", "amrfinder_db")
         os.makedirs(db_dir, exist_ok=True)
+        
+        if force:
+            self.logger.info("🔨 FORCE UPDATE: Removing existing database folders...")
+            for item in os.listdir(db_dir):
+                full_path = os.path.join(db_dir, item)
+                if os.path.isdir(full_path) and item.startswith('20'):
+                    self.logger.info(f"  Removing {item}")
+                    shutil.rmtree(full_path)
+        
         cmd = [self.bundled_update, "--database", db_dir]
         if force:
-            cmd.append("--force_update")
-            self.logger.info("🔨 Force update mode: existing database will be overwritten")
+            # Force update is already handled by removing folders; the update command will download fresh
+            pass
+        
         self.logger.info("Updating AMRfinderPlus database...")
         try:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -264,10 +276,13 @@ class EnteroAMRfinderPlus:
             self.logger.error(f"Bundled AMRfinderPlus check failed: {e}")
             return False
     
-    def run_amrfinder_single_genome(self, genome_file: str, output_dir: str) -> Dict[str, Any]:
+    def run_amrfinder_single_genome(self, genome_file: str, output_dir: str,
+                                     min_identity: float = None, min_coverage: float = None,
+                                     report_mutations: bool = True) -> Dict[str, Any]:
         genome_name = Path(genome_file).stem
         output_file = os.path.join(output_dir, f"{genome_name}_amrfinder.txt")
         run_cpus = self.cpus
+        
         cmd = [
             self.bundled_amrfinder,
             '-n', genome_file,
@@ -276,20 +291,53 @@ class EnteroAMRfinderPlus:
             '--plus',
             '--organism', 'Enterobacter_cloacae'
         ]
+        
         if self.bundled_database and os.path.exists(self.bundled_database):
             cmd.extend(['--database', self.bundled_database])
             self.logger.info(f"Using bundled database: {self.bundled_database}")
         else:
             self.logger.warning("Using default AMRfinderPlus database location")
+        
+        if min_identity is not None:
+            cmd.extend(['--ident_min', str(min_identity)])
+            self.logger.info(f"Using minimum identity: {min_identity}")
+        if min_coverage is not None:
+            cmd.extend(['--coverage_min', str(min_coverage)])
+            self.logger.info(f"Using minimum coverage: {min_coverage}")
+        
+        mut_file = None
+        if report_mutations:
+            mut_file = os.path.join(output_dir, f"{genome_name}_mutations.tsv")
+            cmd.extend(['--mutation_all', mut_file])
+            self.logger.info(f"Will report mutations to {mut_file}")
+        
         self.logger.info(f"Running AMRfinderPlus: {genome_name} (using {run_cpus} CPU cores)")
         try:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
             hits = self._parse_amrfinder_output(output_file)
             self._create_amrfinder_html_report(genome_name, hits, output_dir)
-            return {'genome': genome_name, 'output_file': output_file, 'hits': hits, 'hit_count': len(hits), 'status': 'success'}
+            
+            if mut_file and os.path.exists(mut_file):
+                self._create_mutation_html_report(genome_name, mut_file, output_dir)
+            
+            return {
+                'genome': genome_name,
+                'output_file': output_file,
+                'hits': hits,
+                'hit_count': len(hits),
+                'mutations_file': mut_file,
+                'status': 'success'
+            }
         except subprocess.CalledProcessError as e:
             self.logger.error(f"AMRfinderPlus failed for {genome_name}: {e.stderr}")
-            return {'genome': genome_name, 'output_file': output_file, 'hits': [], 'hit_count': 0, 'status': 'failed', 'error': e.stderr}
+            return {
+                'genome': genome_name,
+                'output_file': output_file,
+                'hits': [],
+                'hit_count': 0,
+                'status': 'failed',
+                'error': e.stderr
+            }
     
     def _parse_amrfinder_output(self, amrfinder_file: str) -> List[Dict]:
         hits = []
@@ -338,12 +386,155 @@ class EnteroAMRfinderPlus:
         self.logger.info(f"Parsed {len(hits)} AMR hits from {amrfinder_file}")
         return hits
     
+    def _parse_mutations_file(self, mut_file: str) -> List[Dict]:
+        """Parse mutation TSV (same format as AMRfinder output) and return list of mutation dicts."""
+        return self._parse_amrfinder_output(mut_file)
+    
+    def _create_mutation_html_report(self, genome_name: str, mutations_file: str, output_dir: str):
+        """Per-genome mutation HTML report."""
+        mutations = self._parse_mutations_file(mutations_file)
+        if not mutations:
+            self.logger.info(f"No mutations found for {genome_name}, skipping mutation HTML.")
+            return
+
+        random_quote = self.get_random_quote()
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Use EnteroScope teal/cyan theme
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EnteroScope - Mutation Report: {genome_name}</title>
+    <style>
+        * {{ margin:0; padding:0; box-sizing:border-box; }}
+        body {{
+            background: linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #06b6d4 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #ffffff;
+            padding: 20px;
+            min-height: 100vh;
+        }}
+        .container {{ max-width: 1400px; margin: 0 auto; }}
+        .header {{ text-align: center; margin-bottom: 30px; }}
+        .ascii-container {{
+            background: rgba(0,0,0,0.7); padding:20px; border-radius:15px; margin-bottom:20px;
+            border: 2px solid #06b6d4;
+        }}
+        .ascii-art {{
+            font-family: 'Courier New', monospace; font-size:10px; white-space:pre;
+            color: #06b6d4; text-shadow: 0 0 10px #06b6d4; overflow-x:auto;
+        }}
+        .quote-container {{
+            background: rgba(0,0,0,0.4); backdrop-filter:blur(10px); padding:20px; border-radius:10px;
+            margin-bottom:30px; text-align:center; border-left:4px solid #06b6d4;
+            transition:opacity 0.5s ease-in-out;
+        }}
+        .quote-text {{ font-size:18px; font-style:italic; margin-bottom:10px; color:#fff; }}
+        .quote-author {{ font-size:14px; color:#fbbf24; font-weight:bold; }}
+        .report-section {{ background: rgba(255,255,255,0.95); color:#1f2937; padding:25px; border-radius:12px; margin-bottom:20px; box-shadow:0 4px 15px rgba(0,0,0,0.2); }}
+        .report-section h2 {{ color:#0f766e; border-bottom:3px solid #3b82f6; padding-bottom:10px; margin-bottom:20px; font-size:24px; }}
+        .table-responsive {{ overflow-x:auto; margin:20px 0; }}
+        .mutation-table {{ width:100%; border-collapse:collapse; font-size:13px; min-width:1200px; }}
+        .mutation-table th {{ background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%); color:white; padding:12px; text-align:left; font-weight:bold; }}
+        .mutation-table td {{ padding:10px; border-bottom:1px solid #e5e7eb; }}
+        .mutation-table tr:nth-child(even) {{ background-color:#f8fafc; }}
+        .footer {{ text-align:center; margin-top:30px; padding:20px; background:rgba(0,0,0,0.3); border-radius:10px; font-size:14px; }}
+        .timestamp {{ color:#fbbf24; font-weight:bold; }}
+        .authorship {{ margin-top:15px; padding:15px; background:rgba(255,255,255,0.1); border-radius:8px; font-size:12px; }}
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div class="ascii-container"><div class="ascii-art">{self.ascii_art}</div></div>
+        <div class="quote-container" id="quoteContainer">
+            <div class="quote-text" id="quoteText">"{random_quote['text']}"</div>
+            <div class="quote-author" id="quoteAuthor">— {random_quote['author']}</div>
+        </div>
+    </div>
+
+    <div class="report-section">
+        <h2>🧬 Point Mutation Report: {genome_name}</h2>
+        <p>All point mutations detected by AMRfinderPlus (including synonymous variants).</p>
+        <div class="table-responsive">
+            <table class="mutation-table">
+                <thead>
+                    <tr>
+                        <th>Gene Symbol</th><th>Mutation</th><th>Class</th><th>Subclass</th>
+                        <th>Contig</th><th>Start</th><th>Stop</th><th>Strand</th>
+                        <th>Coverage (%)</th><th>Identity (%)</th><th>Accession</th>
+                    </tr>
+                </thead>
+                <tbody>
+"""
+        for m in mutations:
+            html += f"""
+                    <tr>
+                        <td>{m.get('gene_symbol', '')}</td>
+                        <td>{m.get('sequence_name', '')}</td>
+                        <td>{m.get('class', '')}</td>
+                        <td>{m.get('subclass', '')}</td>
+                        <td>{m.get('contig_id', '')}</td>
+                        <td>{m.get('start', '')}</td>
+                        <td>{m.get('stop', '')}</td>
+                        <td>{m.get('strand', '')}</td>
+                        <td>{m.get('coverage', '')}</td>
+                        <td>{m.get('identity', '')}</td>
+                        <td>{m.get('accession', '')}</td>
+                    </tr>
+"""
+        html += f"""
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p><strong>EnteroScope</strong> - Mutation Analysis Module</p>
+        <p class="timestamp">Generated: {current_time}</p>
+        <div class="authorship">
+            <p><strong>Technical Support & Inquiries:</strong></p>
+            <p>Author: Brown Beckley | GitHub: <a href="https://github.com/bbeckley-hub/enteroscope" target="_blank">https://github.com/bbeckley-hub/enteroscope</a></p>
+            <p>Email: brownbeckley94@gmail.com</p>
+            <p>Affiliation: University of Ghana Medical School - Department of Medical Biochemistry</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    const quotes = {json.dumps([q['text'] for q in self.science_quotes])};
+    const authors = {json.dumps([q['author'] for q in self.science_quotes])};
+    let idx = 0;
+    function rotate() {{
+        const container = document.getElementById('quoteContainer');
+        const textDiv = document.getElementById('quoteText');
+        const authorDiv = document.getElementById('quoteAuthor');
+        container.style.opacity = '0';
+        setTimeout(() => {{
+            textDiv.innerHTML = '"' + quotes[idx] + '"';
+            authorDiv.innerHTML = '— ' + authors[idx];
+            container.style.opacity = '1';
+            idx = (idx + 1) % quotes.length;
+        }}, 500);
+    }}
+    setInterval(rotate, 10000);
+    document.addEventListener('DOMContentLoaded', rotate);
+</script>
+</body>
+</html>"""
+        out_file = os.path.join(output_dir, f"{genome_name}_mutations.html")
+        with open(out_file, 'w') as f:
+            f.write(html)
+        self.logger.info(f"✓ Mutation HTML report: {out_file}")
+
     def _create_amrfinder_html_report(self, genome_name: str, hits: List[Dict], output_dir: str):
+        # (Your original method – unchanged, but we keep it for completeness)
         analysis = self._analyze_enterobacter_amr_results(hits)
         random_quote = self.get_random_quote()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Teal/Cyan CSS
         html_content = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -753,7 +944,7 @@ class EnteroAMRfinderPlus:
         self.logger.info(f"✓ Master JSON: {json_file}")
     
     def _create_summary_html_report(self, all_results: Dict[str, Any], output_base: str):
-        # Collect data
+        # (Your original method - unchanged)
         total_genomes = len(all_results)
         total_hits = sum(r['hit_count'] for r in all_results.values())
         genes_per_genome = {}
@@ -782,7 +973,6 @@ class EnteroAMRfinderPlus:
         random_quote = self.get_random_quote()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Build HTML (teal/cyan theme)
         html_parts = []
         html_parts.append(f"""<!DOCTYPE html>
 <html>
@@ -920,22 +1110,283 @@ body {{
 </script>
 </body>
 </html>""")
-        
         html_file = os.path.join(output_base, "enteroscope_amrfinder_summary_report.html")
         with open(html_file, 'w') as f:
             f.write('\n'.join(html_parts))
         self.logger.info(f"✓ Summary HTML report: {html_file}")
     
-    def process_single_genome(self, genome_file: str, output_base: str = "enteroscope_amrfinder_results") -> Dict:
+    # ========== New mutation batch summary methods ==========
+    def create_mutation_summary(self, all_results: Dict[str, Any], output_base: str):
+        """Create mutation summaries (TSV, HTML, JSON) for all genomes."""
+        self.logger.info("Creating mutation batch summaries...")
+        all_mutations = []
+        genome_mutation_counts = {}
+        for genome_name, result in all_results.items():
+            if 'mutations_file' in result and result['mutations_file'] and os.path.exists(result['mutations_file']):
+                muts = self._parse_mutations_file(result['mutations_file'])
+                if muts:
+                    genome_mutation_counts[genome_name] = len(muts)
+                    for m in muts:
+                        m_copy = m.copy()
+                        m_copy['genome'] = genome_name
+                        all_mutations.append(m_copy)
+                else:
+                    genome_mutation_counts[genome_name] = 0
+            else:
+                genome_mutation_counts[genome_name] = 0
+        
+        # Always generate summaries, even if no mutations found
+        if not all_mutations:
+            self.logger.info("No mutations found in any genome; creating empty mutation summary files.")
+            # Still generate empty TSV and HTML with a clear message
+            tsv_file = os.path.join(output_base, "mutation_summary.tsv")
+            with open(tsv_file, 'w') as f:
+                f.write("genome\tgene_symbol\telement_name\tclass\tsubclass\tcontig_id\tstart\tstop\tstrand\tcoverage\tidentity\taccession\n")
+            self.logger.info(f"✓ Mutation TSV (empty): {tsv_file}")
+            self._create_mutation_summary_html([], genome_mutation_counts, output_base)
+            self._create_mutation_json_summaries([], genome_mutation_counts, output_base)
+            return
+        
+        # Generate TSV
+        tsv_file = os.path.join(output_base, "mutation_summary.tsv")
+        with open(tsv_file, 'w') as f:
+            fieldnames = ['genome', 'gene_symbol', 'element_name', 'class', 'subclass',
+                          'contig_id', 'start', 'stop', 'strand', 'coverage', 'identity', 'accession']
+            f.write('\t'.join(fieldnames) + '\n')
+            for m in all_mutations:
+                row = [m.get('genome', ''),
+                       m.get('gene_symbol', ''),
+                       m.get('sequence_name', ''),  # In mutation file, 'Element name' is the mutation
+                       m.get('class', ''),
+                       m.get('subclass', ''),
+                       m.get('contig_id', ''),
+                       m.get('start', ''),
+                       m.get('stop', ''),
+                       m.get('strand', ''),
+                       m.get('coverage', ''),
+                       m.get('identity', ''),
+                       m.get('accession', '')]
+                f.write('\t'.join(str(x) for x in row) + '\n')
+        self.logger.info(f"✓ Mutation TSV: {tsv_file}")
+        
+        # Generate HTML and JSON
+        self._create_mutation_summary_html(all_mutations, genome_mutation_counts, output_base)
+        self._create_mutation_json_summaries(all_mutations, genome_mutation_counts, output_base)
+    
+    def _create_mutation_summary_html(self, all_mutations: List[Dict], genome_counts: Dict[str, int], output_base: str):
+        """Gene-centric mutation summary HTML (parsable by Ultimate Reporter)."""
+        gene_freq = defaultdict(lambda: {'count': 0, 'genomes': set(), 'gene': '', 'mutation': '', 'class': '', 'subclass': ''})
+        for m in all_mutations:
+            gene = m.get('gene_symbol', 'unknown')
+            mutation = m.get('sequence_name', '')
+            key = f"{gene}_{mutation}" if mutation else gene
+            gene_freq[key]['count'] += 1
+            gene_freq[key]['genomes'].add(m.get('genome', ''))
+            gene_freq[key]['gene'] = gene
+            gene_freq[key]['mutation'] = mutation
+            gene_freq[key]['class'] = m.get('class', '')
+            gene_freq[key]['subclass'] = m.get('subclass', '')
+        # Convert sets to lists and sort
+        for k in gene_freq:
+            gene_freq[k]['genomes'] = sorted(gene_freq[k]['genomes'])
+        sorted_freq = sorted(gene_freq.values(), key=lambda x: x['count'], reverse=True)
+        
+        random_quote = self.get_random_quote()
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        total_genomes = len(genome_counts)
+        genomes_with_mutations = sum(1 for c in genome_counts.values() if c > 0)
+        
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EnteroScope - Mutation Batch Summary</title>
+    <style>
+        * {{ margin:0; padding:0; box-sizing:border-box; }}
+        body {{
+            background: linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #06b6d4 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #ffffff;
+            padding: 20px;
+            min-height: 100vh;
+        }}
+        .container {{ max-width: 1400px; margin: 0 auto; }}
+        .header {{ text-align: center; margin-bottom: 30px; }}
+        .ascii-container {{
+            background: rgba(0,0,0,0.7); padding:20px; border-radius:15px; margin-bottom:20px;
+            border: 2px solid #06b6d4;
+        }}
+        .ascii-art {{
+            font-family: 'Courier New', monospace; font-size:10px; white-space:pre;
+            color: #06b6d4; text-shadow: 0 0 10px #06b6d4; overflow-x:auto;
+        }}
+        .quote-container {{
+            background: rgba(0,0,0,0.4); backdrop-filter:blur(10px); padding:20px; border-radius:10px;
+            margin-bottom:30px; text-align:center; border-left:4px solid #06b6d4;
+            transition:opacity 0.5s ease-in-out;
+        }}
+        .quote-text {{ font-size:18px; font-style:italic; margin-bottom:10px; color:#fff; }}
+        .quote-author {{ font-size:14px; color:#fbbf24; font-weight:bold; }}
+        .report-section {{
+            background: rgba(255,255,255,0.95); color:#1f2937; padding:25px; border-radius:12px;
+            margin-bottom:20px; box-shadow:0 4px 15px rgba(0,0,0,0.2);
+        }}
+        .report-section h2 {{ color:#0f766e; border-bottom:3px solid #3b82f6; padding-bottom:10px; margin-bottom:20px; font-size:24px; }}
+        .summary-table {{ width:100%; border-collapse:collapse; margin-top:20px; font-size:14px; }}
+        .summary-table th {{ background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%); color:white; padding:12px; text-align:left; font-weight:bold; }}
+        .summary-table td {{ padding:12px; border-bottom:1px solid #e5e7eb; }}
+        .summary-table tr:nth-child(even) {{ background-color:#f8fafc; }}
+        .summary-table tr:hover {{ background-color:#e0f2fe; }}
+        .table-responsive {{ overflow-x:auto; margin:20px 0; }}
+        .sequence-cell {{ white-space:normal !important; word-wrap:break-word; max-width:400px; min-width:200px; }}
+        .footer {{
+            text-align:center; margin-top:30px; padding:20px; background:rgba(0,0,0,0.3); border-radius:10px;
+            font-size:14px;
+        }}
+        .timestamp {{ color:#fbbf24; font-weight:bold; }}
+        .authorship {{ margin-top:15px; padding:15px; background:rgba(255,255,255,0.1); border-radius:8px; font-size:12px; }}
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div class="ascii-container"><div class="ascii-art">{self.ascii_art}</div></div>
+        <div class="quote-container" id="quoteContainer">
+            <div class="quote-text" id="quoteText">"{random_quote['text']}"</div>
+            <div class="quote-author" id="quoteAuthor">— {random_quote['author']}</div>
+        </div>
+    </div>
+
+    <div class="report-section">
+        <h2>🧬 Mutation Summary Across All Genomes</h2>
+        <p>Total genomes with mutations: {genomes_with_mutations} / {total_genomes}<br>
+        Total mutation events: {len(all_mutations)}</p>
+    </div>
+
+    <div class="report-section">
+        <h2>📊 Mutation Frequency by Gene/Mutation</h2>
+        <div class="table-responsive">
+            <table class="summary-table" id="mutation-summary-table">
+                <thead>
+                    <tr><th>Gene</th><th>Mutation</th><th>Count</th><th>Class</th><th>Subclass</th><th>Genomes</th></tr>
+                </thead>
+                <tbody>
+"""
+        if not sorted_freq:
+            html += '<tr><td colspan="6" style="text-align:center; padding:20px;">No mutations detected in any genome.</td></tr>'
+        else:
+            for item in sorted_freq:
+                genomes_display = ', '.join(item['genomes']) if item['genomes'] else 'None'
+                html += f"""
+                    <tr>
+                        <td><strong>{item['gene']}</strong></td>
+                        <td>{item['mutation']}</td>
+                        <td>{item['count']}</td>
+                        <td>{item['class']}</td>
+                        <td>{item['subclass']}</td>
+                        <td class="sequence-cell">{genomes_display}</td>
+                    </tr>
+"""
+        html += f"""
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p><strong>EnteroScope</strong> - Mutation Batch Summary Module</p>
+        <p class="timestamp">Generated: {current_time}</p>
+        <div class="authorship">
+            <p><strong>Technical Support & Inquiries:</strong></p>
+            <p>Author: Brown Beckley | GitHub: <a href="https://github.com/bbeckley-hub/enteroscope" target="_blank">https://github.com/bbeckley-hub/enteroscope</a></p>
+            <p>Email: brownbeckley94@gmail.com</p>
+            <p>Affiliation: University of Ghana Medical School - Department of Medical Biochemistry</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    const quotes = {json.dumps([q['text'] for q in self.science_quotes])};
+    const authors = {json.dumps([q['author'] for q in self.science_quotes])};
+    let idx = 0;
+    function rotate() {{
+        const container = document.getElementById('quoteContainer');
+        const textDiv = document.getElementById('quoteText');
+        const authorDiv = document.getElementById('quoteAuthor');
+        container.style.opacity = '0';
+        setTimeout(() => {{
+            textDiv.innerHTML = '"' + quotes[idx] + '"';
+            authorDiv.innerHTML = '— ' + authors[idx];
+            container.style.opacity = '1';
+            idx = (idx + 1) % quotes.length;
+        }}, 500);
+    }}
+    setInterval(rotate, 10000);
+    document.addEventListener('DOMContentLoaded', rotate);
+</script>
+</body>
+</html>"""
+        out_file = os.path.join(output_base, "mutation_summary.html")
+        with open(out_file, 'w') as f:
+            f.write(html)
+        self.logger.info(f"✓ Mutation HTML summary: {out_file}")
+    
+    def _create_mutation_json_summaries(self, all_mutations: List[Dict], genome_counts: Dict[str, int], output_base: str):
+        genome_summary = {genome: {'total_mutations': count} for genome, count in genome_counts.items()}
+        gene_mutation_map = defaultdict(lambda: {'count': 0, 'genomes': set(), 'details': []})
+        for m in all_mutations:
+            gene = m.get('gene_symbol', 'unknown')
+            mut_name = m.get('sequence_name', '')
+            key = f"{gene}_{mut_name}" if mut_name else gene
+            gene_mutation_map[key]['count'] += 1
+            gene_mutation_map[key]['genomes'].add(m.get('genome', ''))
+            gene_mutation_map[key]['details'].append({
+                'genome': m.get('genome'),
+                'gene': gene,
+                'mutation': mut_name,
+                'class': m.get('class'),
+                'subclass': m.get('subclass'),
+                'contig': m.get('contig_id'),
+                'start': m.get('start'),
+                'stop': m.get('stop')
+            })
+        for v in gene_mutation_map.values():
+            v['genomes'] = list(v['genomes'])
+        master_json = {
+            'metadata': {
+                'tool': self.metadata['tool_name'],
+                'version': self.metadata['version'],
+                'analysis_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'total_genomes_analyzed': len(genome_counts),
+                'total_mutations_detected': len(all_mutations)
+            },
+            'genome_summary': genome_summary,
+            'mutation_frequency': {k: {'count': v['count'], 'genomes': v['genomes']} for k, v in gene_mutation_map.items()},
+            'all_mutations': all_mutations
+        }
+        json_file = os.path.join(output_base, "mutation_master_summary.json")
+        with open(json_file, 'w') as f:
+            json.dump(master_json, f, indent=2)
+        self.logger.info(f"✓ Mutation master JSON: {json_file}")
+    
+    def process_single_genome(self, genome_file: str, output_base: str = "enteroscope_amrfinder_results",
+                              min_identity: float = None, min_coverage: float = None,
+                              report_mutations: bool = True) -> Dict:
         genome_name = Path(genome_file).stem
         results_dir = os.path.join(output_base, genome_name)
         os.makedirs(results_dir, exist_ok=True)
         self.logger.info(f"=== PROCESSING GENOME: {genome_name} ===")
-        result = self.run_amrfinder_single_genome(genome_file, results_dir)
+        result = self.run_amrfinder_single_genome(genome_file, results_dir,
+                                                  min_identity=min_identity,
+                                                  min_coverage=min_coverage,
+                                                  report_mutations=report_mutations)
         self.logger.info(f"{'✓' if result['status']=='success' else '✗'} {genome_name}: {result['hit_count']} AMR hits")
         return result
     
-    def process_multiple_genomes(self, genome_pattern: str, output_base: str = "enteroscope_amrfinder_results") -> Dict:
+    def process_multiple_genomes(self, genome_pattern: str, output_base: str = "enteroscope_amrfinder_results",
+                                 min_identity: float = None, min_coverage: float = None,
+                                 report_mutations: bool = True) -> Dict:
         if not self.check_amrfinder_installed():
             raise RuntimeError("BUNDLED AMRfinderPlus not properly installed")
         fasta_patterns = [genome_pattern, f"{genome_pattern}.fasta", f"{genome_pattern}.fa", f"{genome_pattern}.fna", f"{genome_pattern}.faa"]
@@ -951,7 +1402,8 @@ body {{
         self.logger.info(f"🚀 MAXIMUM SPEED: Using {max_concurrent} concurrent jobs, each using {self.cpus} threads")
         all_results = {}
         with ThreadPoolExecutor(max_workers=max_concurrent) as ex:
-            futures = {ex.submit(self.process_single_genome, f, output_base): f for f in files}
+            futures = {ex.submit(self.process_single_genome, f, output_base,
+                                 min_identity, min_coverage, report_mutations): f for f in files}
             for fut in as_completed(futures):
                 try:
                     res = fut.result()
@@ -959,6 +1411,8 @@ body {{
                 except Exception as e:
                     self.logger.error(f"Failed {futures[fut]}: {e}")
         self.create_amr_summary(all_results, output_base)
+        # Always create mutation summary (even if no mutations)
+        self.create_mutation_summary(all_results, output_base)
         self.logger.info(f"=== ANALYSIS COMPLETE: {len(all_results)} genomes processed ===")
         return all_results
 
@@ -967,8 +1421,11 @@ def main():
     parser.add_argument('pattern', nargs='?', help='File pattern for genomes (e.g., "*.fna")')
     parser.add_argument('--cpus', '-c', type=int, default=None, help='Number of CPU cores (max 64)')
     parser.add_argument('--output', '-o', default='enteroscope_amrfinder_results', help='Output directory')
-    parser.add_argument('--update-db', action='store_true', help='Update AMRfinderPlus database to latest version and exit')
-    parser.add_argument('--force-update', action='store_true', help='Force update (overwrite existing database)')
+    parser.add_argument('--min-identity', type=float, default=None, help='Minimum identity (0..1) for hits. Default: AMRfinder auto threshold')
+    parser.add_argument('--min-coverage', type=float, default=None, help='Minimum coverage of reference (0..1). Default: 0.5')
+    parser.add_argument('--skip-mutations', action='store_true', help='Skip point mutation reporting (mutations are reported by default)')
+    parser.add_argument('--update-db', action='store_true', help='Update AMRfinderPlus database to latest version (incremental) and exit')
+    parser.add_argument('--force-update', action='store_true', help='Force complete database update (overwrites existing folders) and exit')
     parser.add_argument('--db-version', action='store_true', help='Show current database version and exit')
     args = parser.parse_args()
     
@@ -987,7 +1444,10 @@ def main():
     
     executor = EnteroAMRfinderPlus(cpus=args.cpus)
     try:
-        results = executor.process_multiple_genomes(args.pattern, args.output)
+        results = executor.process_multiple_genomes(args.pattern, args.output,
+                                                    min_identity=args.min_identity,
+                                                    min_coverage=args.min_coverage,
+                                                    report_mutations=not args.skip_mutations)
         total_hits = sum(r['hit_count'] for r in results.values())
         high = sum(1 for r in results.values() for g in [h.get('gene_symbol') for h in r['hits'] if h.get('gene_symbol')] if g in executor.high_risk_genes)
         crit = sum(1 for r in results.values() for g in [h.get('gene_symbol') for h in r['hits'] if h.get('gene_symbol')] if g in executor.critical_risk_genes)
@@ -997,6 +1457,8 @@ def main():
         executor.logger.info(f"   High-risk genes: {high}")
         executor.logger.info(f"   CRITICAL risk genes: {crit}")
         executor.logger.info(f"   Database: {executor.metadata['database_version']}")
+        executor.logger.info(f"\n📁 Output files in: {args.output}/")
+        executor.logger.info(f"   - mutation_summary.html  (parsable by Ultimate Reporter)")
     except Exception as e:
         executor.logger.error(f"Analysis failed: {e}")
         sys.exit(1)

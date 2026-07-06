@@ -5,7 +5,7 @@ Author: Brown Beckley <brownbeckley94@gmail.com>
 Affiliation: University of Ghana Medical School - Department of Medical Biochemistry
 GitHub: https://github.com/bbeckley-hub/enteroscope
 Date: 2026
-Version: 1.0.0 (Enterobacter cloacae complex, teal/cyan theme, CPU cap 64)
+Version: 1.1.0 (Enterobacter cloacae complex, teal/cyan theme, CPU cap 64)
 """
 
 import os
@@ -56,7 +56,7 @@ class EnteroFASTAQC:
         # Metadata
         self.metadata = {
             "tool_name": "EnteroScope FASTA QC Analysis",
-            "version": "1.0.0", 
+            "version": "1.1.0", 
             "authors": ["Brown Beckley"],
             "email": "brownbeckley94@gmail.com",
             "github": "https://github.com/bbeckley-hub/enteroscope",

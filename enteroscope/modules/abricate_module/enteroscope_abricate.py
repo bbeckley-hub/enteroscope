@@ -6,7 +6,7 @@ Author: Brown Beckley <brownbeckley94@gmail.com>
 Affiliation: University of Ghana Medical School - Department of Medical Biochemistry
 GitHub: https://github.com/bbeckley-hub/enteroscope
 Date: 2026
-Version: 1.0.0 (teal/cyan theme)
+Version: 1.1.0 (teal/cyan theme)
 """
 
 import subprocess
@@ -29,10 +29,12 @@ from collections import defaultdict, Counter
 class EnteroAbricateExecutor:
     """ABRicate executor for Enterobacter cloacae complex - MAXIMUM SPEED (capped at 64 cores)"""
     
-    def __init__(self, cpus: int = None):
+    def __init__(self, cpus: int = None, min_identity: float = 80.0, min_coverage: float = 80.0):
         self.logger = self._setup_logging()
         self.available_ram = self._get_available_ram()
         self.cpus = self._calculate_optimal_cpus(cpus)
+        self.min_identity = min_identity
+        self.min_coverage = min_coverage
 
         # Databases suitable for Enterobacteriaceae
         self.required_databases = [
@@ -131,7 +133,7 @@ class EnteroAbricateExecutor:
 
         self.metadata = {
             "tool_name": "EnteroScope ABRicate",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "authors": ["Brown Beckley"],
             "email": "brownbeckley94@gmail.com",
             "github": "https://github.com/bbeckley-hub/enteroscope",
@@ -252,16 +254,21 @@ class EnteroAbricateExecutor:
         except Exception as e:
             self.logger.error(f"Database setup error: {e}")
 
-    def run_abricate_single_db(self, genome_file: str, database: str, out_dir: str) -> Dict:
+    def run_abricate_single_db(self, genome_file: str, database: str, out_dir: str,
+                                min_identity: float = None, min_coverage: float = None) -> Dict:
+        """Run ABRicate on a single genome with given thresholds."""
         genome_name = Path(genome_file).stem
         out_file = os.path.join(out_dir, f"abricate_{database}.txt")
-        cmd = ['abricate', genome_file, '--db', database, '--minid', '80', '--mincov', '80']
-        self.logger.info(f"Running ABRicate: {genome_name} --db {database}")
+        # Use provided thresholds or fall back to instance defaults
+        ident = min_identity if min_identity is not None else self.min_identity
+        cov = min_coverage if min_coverage is not None else self.min_coverage
+        cmd = ['abricate', genome_file, '--db', database, '--minid', str(ident), '--mincov', str(cov)]
+        self.logger.info(f"Running ABRicate: {genome_name} --db {database} (--minid {ident} --mincov {cov})")
         try:
             with open(out_file, 'w') as f:
                 subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True, check=True)
             hits = self._parse_abricate_output(out_file)
-            self._create_database_html_report(genome_name, database, hits, out_dir)
+            self._create_database_html_report(genome_name, database, hits, out_dir, ident, cov)
             return {'database': database, 'genome': genome_name, 'output_file': out_file,
                     'hits': hits, 'hit_count': len(hits), 'status': 'success'}
         except subprocess.CalledProcessError as e:
@@ -315,8 +322,9 @@ class EnteroAbricateExecutor:
             self.logger.error(f"Error parsing {abricate_file}: {e}")
         return hits
 
-    # ---------- Individual database HTML report (teal/cyan) ----------
-    def _create_database_html_report(self, genome_name: str, database: str, hits: List[Dict], out_dir: str):
+    # ---------- Individual database HTML report (teal/cyan) with thresholds ----------
+    def _create_database_html_report(self, genome_name: str, database: str, hits: List[Dict], out_dir: str,
+                                      min_identity: float, min_coverage: float):
         random_quote = self.get_random_quote()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -457,6 +465,8 @@ class EnteroAbricateExecutor:
         <div class="metrics-grid">
             <div class="metric-card"><div class="metric-label">Database</div><div class="metric-value">{database.upper()}</div></div>
             <div class="metric-card"><div class="metric-label">Genome</div><div class="metric-value">{genome_name}</div></div>
+            <div class="metric-card"><div class="metric-label">Min Identity</div><div class="metric-value">{min_identity}%</div></div>
+            <div class="metric-card"><div class="metric-label">Min Coverage</div><div class="metric-value">{min_coverage}%</div></div>
             <div class="metric-card"><div class="metric-label">Analysis Date</div><div class="metric-value">{datetime.now().strftime('%Y-%m-%d %H:%M')}</div></div>
             <div class="metric-card"><div class="metric-label">Total Hits</div><div class="metric-value">{len(hits)}</div></div>
         </div>
@@ -1015,6 +1025,7 @@ class EnteroAbricateExecutor:
             <div class="stat-card"><div class="stat-value">{len(set(hit['gene'] for hit in hits))}</div><div class="stat-label">UNIQUE GENES</div></div>
             <div class="stat-card"><div class="stat-value">{datetime.now().strftime('%Y-%m-%d')}</div><div class="stat-label">ANALYSIS DATE</div></div>
         </div>
+        <p><strong>Min Identity:</strong> {self.min_identity}% &nbsp;|&nbsp; <strong>Min Coverage:</strong> {self.min_coverage}%</p>
     </div>
 
     <div class="report-section">
@@ -1126,18 +1137,22 @@ class EnteroAbricateExecutor:
         self.logger.info(f"Master JSON: {out_file}")
 
     # ---------- Single and multiple genome processing ----------
-    def process_single_genome(self, genome_file: str, out_base: str = "enteroscope_abricate_results") -> Dict:
+    def process_single_genome(self, genome_file: str, out_base: str = "enteroscope_abricate_results",
+                              min_identity: float = None, min_coverage: float = None) -> Dict:
         gname = Path(genome_file).stem
         out_dir = os.path.join(out_base, gname)
         os.makedirs(out_dir, exist_ok=True)
         self.logger.info(f"Processing {gname}")
         results = {}
+        ident = min_identity if min_identity is not None else self.min_identity
+        cov = min_coverage if min_coverage is not None else self.min_coverage
         for db in self.required_databases:
-            results[db] = self.run_abricate_single_db(genome_file, db, out_dir)
-        #self.create_comprehensive_html_report(gname, results, out_dir)
+            results[db] = self.run_abricate_single_db(genome_file, db, out_dir, ident, cov)
+        self.create_comprehensive_html_report(gname, results, out_dir)
         return {'genome': gname, 'results': results, 'total_hits': sum(r['hit_count'] for r in results.values())}
 
-    def process_multiple_genomes(self, pattern: str, out_base: str = "enteroscope_abricate_results") -> Dict:
+    def process_multiple_genomes(self, pattern: str, out_base: str = "enteroscope_abricate_results",
+                                 min_identity: float = None, min_coverage: float = None) -> Dict:
         if not self.check_abricate_installed():
             raise RuntimeError("ABRicate not installed")
         self.setup_abricate_databases()
@@ -1152,7 +1167,7 @@ class EnteroAbricateExecutor:
         all_results = {}
         if len(fasta_files) > 1 and self.cpus > 1:
             with ThreadPoolExecutor(max_workers=self.cpus) as ex:
-                futures = {ex.submit(self.process_single_genome, f, out_base): f for f in fasta_files}
+                futures = {ex.submit(self.process_single_genome, f, out_base, min_identity, min_coverage): f for f in fasta_files}
                 for fut in as_completed(futures):
                     try:
                         res = fut.result()
@@ -1162,7 +1177,7 @@ class EnteroAbricateExecutor:
         else:
             for f in fasta_files:
                 try:
-                    res = self.process_single_genome(f, out_base)
+                    res = self.process_single_genome(f, out_base, min_identity, min_coverage)
                     all_results[res['genome']] = res
                 except Exception as e:
                     self.logger.error(f"Failed {f}: {e}")
@@ -1179,12 +1194,14 @@ def main():
 Examples:
   python enteroscope_abricate.py "*.fna"
   python enteroscope_abricate.py "*.fasta" --cpus 64 --output my_results
-  python enteroscope_abricate.py "GCF_*.fna" --cpus 32
+  python enteroscope_abricate.py "GCF_*.fna" --cpus 32 --min-identity 90 --min-coverage 85
         """
     )
     parser.add_argument('pattern', help='Glob pattern for FASTA files (e.g., "*.fna")')
     parser.add_argument('--cpus', '-c', type=int, default=None, help='Number of CPU cores (max 64)')
     parser.add_argument('--output', '-o', default='enteroscope_abricate_results', help='Output directory')
+    parser.add_argument('--min-identity', type=float, default=80.0, help='Minimum identity percentage (default: 80)')
+    parser.add_argument('--min-coverage', type=float, default=80.0, help='Minimum coverage percentage (default: 80)')
     args = parser.parse_args()
 
     print("\n" + "="*80)
@@ -1198,11 +1215,14 @@ Examples:
 """)
     print("EnteroScope ABRicate - Maximum Speed Mode (capped at 64 cores)")
     print(f"Author: Brown Beckley | GitHub: https://github.com/bbeckley-hub/enteroscope")
+    print(f"Min Identity: {args.min_identity}% | Min Coverage: {args.min_coverage}%")
     print("="*80 + "\n")
 
-    executor = EnteroAbricateExecutor(cpus=args.cpus)
+    executor = EnteroAbricateExecutor(cpus=args.cpus, min_identity=args.min_identity, min_coverage=args.min_coverage)
     try:
-        results = executor.process_multiple_genomes(args.pattern, args.output)
+        results = executor.process_multiple_genomes(args.pattern, args.output,
+                                                    min_identity=args.min_identity,
+                                                    min_coverage=args.min_coverage)
         executor.logger.info(f"\n✅ Analysis complete. Results in: {args.output}")
         executor.logger.info(f"   Processed {len(results)} genomes.")
     except Exception as e:
