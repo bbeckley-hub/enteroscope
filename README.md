@@ -6,7 +6,7 @@
   
 # 🔬 EnteroScope
 
-### **A species-optimized computational pipeline for rapid, accessible *Enterobacter cloacae* genotyping and surveillance**
+### **A Tailored Computational Workflow Enabling Rapid, User-Friendly Genotyping and Epidemiological Surveillance of the Enterobacter cloacae Complex**
 
 #### **Complete CREC (Carbapenem‑Resistant *Enterobacter cloacae*) genomic analysis in minutes — not hours**
 
@@ -424,8 +424,8 @@ If you use EnteroScope in your research, please cite:
 > Beckley, B.(2026). EnteroScope: a species‑optimized computational pipeline for rapid and accessible *Enterobacter cloacae* genotyping and surveillance.
 ```bibtex
 @article{beckley2026enteroscope,
-  title={EnteroScope: a species‑optimized computational pipeline for rapid and accessible Enterobacter cloacae complex genotyping and surveillance},
-  author={Beckley, Brown and Amarh, Vincent},
+  title={EnteroScope: A Tailored Computational Workflow Enabling Rapid, User-Friendly Genotyping and Epidemiological Surveillance of the Enterobacter cloacae Complex},
+  author={Beckley Brown},
   journal={In preparation},
   volume={?},
   pages={??},
@@ -453,8 +453,6 @@ We thank the open‑source bioinformatics community, especially:
 📧 brownbeckley94@gmail.com  
 🐙 [bbeckley-hub](https://github.com/bbeckley-hub)  
 🔗 [LinkedIn](https://www.linkedin.com/in/brown-beckley-190315319)
-
-**Vincent Amarh** (Co‑author)
 
 ---
 
